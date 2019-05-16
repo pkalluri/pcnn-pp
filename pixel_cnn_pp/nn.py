@@ -43,7 +43,7 @@ def energy_distance(x, x_sample):
 
     return 2.*l1 - l2
 
-def discretized_mix_logistic_loss(x,l,sum_all=True):
+def discretized_mix_logistic_loss(x,l, accumulator="standard", include_entropy=False):
     """ log-likelihood for mixture of discretized logistics, assumes the data has been rescaled to [-1,1] interval """
     xs = int_shape(x) # true image (i.e. labels) to regress to, e.g. (B,32,32,3)
     ls = int_shape(l) # predicted distribution, e.g. (B,32,32,100)
@@ -80,11 +80,22 @@ def discretized_mix_logistic_loss(x,l,sum_all=True):
     # if the probability on a sub-pixel is below 1e-5, we use an approximation based on the assumption that the log-density is constant in the bin of the observed sub-pixel value
     log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1e-5, tf.log(tf.maximum(cdf_delta, 1e-12)), log_pdf_mid - np.log(127.5))))
 
-    log_probs = tf.reduce_sum(log_probs,3) + log_prob_from_logits(logit_probs)
-    if sum_all:
-        return -tf.reduce_sum(log_sum_exp(log_probs))
+    log_probs = tf.reduce_sum(log_probs,3) + log_prob_from_logits(logit_probs) # for each logistic distribution, e.g. B,32,32,10
+    log_probs = log_sum_exp(log_probs) # for each pixel e.g. B,32,32
+    log_probs = tf.reduce_sum(log_probs, [1,2]) # for each sample, e.g. B
+    # there are multiple ways to accumulate many samples' log_probs into one batch loss
+    accumulators = {"standard": tf.reduce_sum,          # sum of log_probs = log of the product of probs
+                    "log_prod": tf.reduce_sum,          # ditto
+                    "log_sum":  tf.reduce_logsumexp,    # log of the sum of probs
+                    "log_max":  tf.reduce_max}          # max of log_probs = log of the max of probs
+    accumulator = accumulators[accumulator]
+    loss = -1*accumulator(log_probs)
+    if include_entropy:
+        negative_entropy = tf.reduce_sum(tf.exp(log_probs) * log_probs)
+        return negative_entropy + loss
     else:
-        return -tf.reduce_sum(log_sum_exp(log_probs),[1,2])
+        return loss
+
 
 def sample_from_discretized_mix_logistic(l,nr_mix):
     ls = int_shape(l)

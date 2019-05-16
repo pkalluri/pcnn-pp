@@ -22,8 +22,8 @@ from utils import plotting
 # -----------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 # data I/O
-parser.add_argument('-i', '--data_dir', type=str, default='/local_home/tim/pxpp/data', help='Location for the dataset')
-parser.add_argument('-o', '--save_dir', type=str, default='/local_home/tim/pxpp/save', help='Location for parameter checkpoints and samples')
+parser.add_argument('-i', '--data_dir', type=str, default='../data', help='Location for the dataset')
+parser.add_argument('-o', '--save_dir', type=str, default='save', help='Location for parameter checkpoints and samples')
 parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet')
 parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
@@ -34,6 +34,8 @@ parser.add_argument('-m', '--nr_logistic_mix', type=int, default=10, help='Numbe
 parser.add_argument('-z', '--resnet_nonlinearity', type=str, default='concat_elu', help='Which nonlinearity to use in the ResNet layers. One of "concat_elu", "elu", "relu" ')
 parser.add_argument('-c', '--class_conditional', dest='class_conditional', action='store_true', help='Condition generative model on labels?')
 parser.add_argument('-ed', '--energy_distance', dest='energy_distance', action='store_true', help='use energy distance in place of likelihood')
+parser.add_argument('-en', '--entropy', dest='entropy', action='store_true', help='Include -entropy term in loss, encouraging diversity?')
+parser.add_argument('-a', '--accumulator', type=str, default='standard', help='How to accumulate many samples losses into one batch loss')
 # optimization
 parser.add_argument('-l', '--learning_rate', type=float, default=0.001, help='Base learning rate')
 parser.add_argument('-e', '--lr_decay', type=float, default=0.999995, help='Learning rate decay, applied every step of the optimization')
@@ -57,7 +59,7 @@ tf.set_random_seed(args.seed)
 
 # energy distance or maximum likelihood?
 if args.energy_distance:
-    loss_fun = nn.energy_distance
+    loss_fun = nn.energy_distance # todo: this is currently broken, because it does not take the same args as the following loss
 else:
     loss_fun = nn.discretized_mix_logistic_loss
 
@@ -70,6 +72,12 @@ if args.data_set == 'cifar':
 elif args.data_set == 'imagenet':
     import data.imagenet_data as imagenet_data
     DataLoader = imagenet_data.DataLoader
+elif args.data_set == 'imagenet_large':
+    import data.imagenet_large_data as imagenet_large_data
+    DataLoader = imagenet_large_data.DataLoader
+elif args.data_set == 'imagenet_small':
+    import data.imagenet_small_data as imagenet_small_data
+    DataLoader = imagenet_small_data.DataLoader
 else:
     raise("unsupported dataset")
 train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
@@ -117,14 +125,14 @@ for i in range(args.nr_gpu):
     with tf.device('/gpu:%d' % i):
         # train
         out = model(xs[i], hs[i], ema=None, dropout_p=args.dropout_p, **model_opt)
-        loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out))
+        loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out, args.accumulator, args.entropy))
 
         # gradients
         grads.append(tf.gradients(loss_gen[i], all_params, colocate_gradients_with_ops=True))
 
         # test
         out = model(xs[i], hs[i], ema=ema, dropout_p=0., **model_opt)
-        loss_gen_test.append(loss_fun(xs[i], out))
+        loss_gen_test.append(loss_fun(xs[i], out, args.accumulator, args.entropy))
 
         # sample
         out = model(xs[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
