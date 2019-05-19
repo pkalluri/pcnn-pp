@@ -18,11 +18,14 @@ from scoring import inception
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-args', '--out_args_file', type=str, default='', help='.out file to parse arguments from and overwrite any of the below')
+    parser.add_argument('-ov', '--overwrite_samples', dest='overwrite_samples', action='store_true', help='Overwrite generated files?')
+    parser.add_argument('-af', '--args_file', type=str, default='', help='.out file to parse arguments from and overwrite any of the below')
     parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/697740-cifar', help='Directory where the checkpoint files (and possibly samples) live')
     parser.add_argument('-cp', '--checkpoint_prefix', type=str, default='params_cifar.ckpt', help='Checkpoint files prefix')
     # parser.add_argument('-ss', '--save_samples', type=bool, default=True, help='Whether or not to save generated samples')
-    parser.add_argument('-nbg', '--num_batches_generated', type=int, default=2, help='How many batches of samples to generate')
+    parser.add_argument('-nbg', '--num_batches_generated', type=int, default=10, help='How many batches of samples to generate')
+    parser.add_argument('-b', '--batch_size_generator', type=int, default=128, help='Batch size for generation')
+    parser.add_argument('-u', '--init_batch_size', type=int, default=16, help='How much data to use for data-dependent initialization.')
     parser.add_argument('-nsp', '--num_splits', type=int, default=10, help='How many splits to use for inception score')
     parser.add_argument('-i', '--data_dir', type=str, default='/tmp/pcnn-pp_data', help='Location for the dataset')
     # Below only used for graph definition
@@ -45,8 +48,6 @@ def get_args():
     # optimization
     #parser.add_argument('-l', '--learning_rate', type=float, default=0.001, help='Base learning rate')
     #parser.add_argument('-e', '--lr_decay', type=float, default=0.999995, help='Learning rate decay, applied every step of the optimization')
-    parser.add_argument('-b', '--batch_size', type=int, default=16, help='Batch size during training per GPU')
-    parser.add_argument('-u', '--init_batch_size', type=int, default=16, help='How much data to use for data-dependent initialization.')
     parser.add_argument('-p', '--dropout_p', type=float, default=0.5, help='Dropout strength (i.e. 1 - keep_prob). 0 = No dropout, higher = more dropout.')
     #parser.add_argument('-x', '--max_epochs', type=int, default=5000, help='How many epochs to run in total?')
     parser.add_argument('-g', '--nr_gpu', type=int, default=8, help='How many GPUs to distribute the training across?')
@@ -56,10 +57,28 @@ def get_args():
     # reproducibility
     parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
     # --------------------------------
-    # TODO overwrite parsed args with args read from a .out file, if passed in
     args = parser.parse_args()
+    overwrite_args = read_args_from_out_file(args.args_file)
+    d = vars(args)
+    d.update(overwrite_args)
     print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
     return args
+
+def read_args_from_out_file(filename):
+    with open(filename, 'r') as f:
+        json_string = ''
+        reading_json = False
+        for line in f:
+            if reading_json:
+                json_string += line.strip()
+                if line.startswith('}'):
+                    reading_json = False
+
+            if line.startswith('input args:'):
+                reading_json = True
+    
+    data = json.loads(json_string)
+    return data
 
 def recreate_model(args):
     # fix random seed for reproducibility
@@ -90,7 +109,7 @@ def recreate_model(args):
     else:
         raise("unsupported dataset")
     print("creating train_data DataLoader...")
-    train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+    train_data = DataLoader(args.data_dir, 'train', args.batch_size_generator * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
     # test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
     obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
     assert len(obs_shape) == 3, 'assumed right now'
@@ -98,7 +117,7 @@ def recreate_model(args):
     # data place holders
     print("creating data place holders...")
     x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
-    xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
+    xs = [tf.placeholder(tf.float32, shape=(args.batch_size_generator, ) + obs_shape) for i in range(args.nr_gpu)]
 
     # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
     if args.class_conditional:
@@ -106,9 +125,9 @@ def recreate_model(args):
         num_labels = train_data.get_num_labels()
         y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
         h_init = tf.one_hot(y_init, num_labels)
-        y_sample = np.split(np.mod(np.arange(args.batch_size*args.nr_gpu), num_labels), args.nr_gpu)
+        y_sample = np.split(np.mod(np.arange(args.batch_size_generator*args.nr_gpu), num_labels), args.nr_gpu)
         h_sample = [tf.one_hot(tf.Variable(y_sample[i], trainable=False), num_labels) for i in range(args.nr_gpu)]
-        ys = [tf.placeholder(tf.int32, shape=(args.batch_size,)) for i in range(args.nr_gpu)]
+        ys = [tf.placeholder(tf.int32, shape=(args.batch_size_generator,)) for i in range(args.nr_gpu)]
         hs = [tf.one_hot(ys[i], num_labels) for i in range(args.nr_gpu)]
     else:
         h_init = None
@@ -168,8 +187,8 @@ def recreate_model(args):
         optimizer = tf.group(nn.adam_updates(all_params, grads[0], lr=tf_lr, mom1=0.95, mom2=0.9995), maintain_averages_op)
 
     # convert loss to bits/dim
-    bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
-    bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
+    bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
+    bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
 
     # init & save
     print("generating initializer and saver...")
@@ -179,7 +198,7 @@ def recreate_model(args):
     return saver, obs_shape, new_x_gen, xs
 
 def sample_from_model(sess, obs_shape, new_x_gen, xs):
-    x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
+    x_gen = [np.zeros((args.batch_size_generator,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             new_x_gen_np = sess.run(new_x_gen, {xs[i]: x_gen[i] for i in range(args.nr_gpu)})
@@ -191,11 +210,9 @@ if __name__ == "__main__":
     args = get_args()
 
     samples_path = os.path.join(args.checkpoint_dir,'samples_from_%s.npz' % (args.checkpoint_prefix))
-    if os.path.exists(samples_path):
+    if not args.overwrite_samples and os.path.exists(samples_path):
         print('loading samples from {}'.format(samples_path))
-        samples = np.load(samples_path)
-        print(samples)
-        print(list(samples))
+        samples = list(np.load(samples_path)['samples_np'])
         print('loaded {} samples'.format(len(samples)))
     else:
         saver, obs_shape, new_x_gen, xs = recreate_model(args)
@@ -211,10 +228,12 @@ if __name__ == "__main__":
 
             print('saving samples to {} ...'.format(samples_path))
             samples_np = np.concatenate(samples,axis=0)
-            np.savez(samples_path, samples_np)
+            np.savez(samples_path, samples_np=samples_np)
+            samples = list(samples_np)
     
     print('getting inception score on {} samples with {} splits...'.format(len(samples), args.num_splits))
+    process = lambda img: ((img+1)*255/2).astype('uint8')
+    samples = [process(s) for s in samples]
     mean, var = inception.get_inception_score(samples, splits=args.num_splits)
-    print(mean, var)
     print('Inception Score: mean={}, variance={}'.format(mean, var))
 
