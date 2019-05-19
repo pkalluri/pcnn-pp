@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/697740-cifar', help='Directory where the checkpoint files (and possibly samples) live')
     parser.add_argument('-cp', '--checkpoint_prefix', type=str, default='params_cifar.ckpt', help='Checkpoint files prefix')
     # parser.add_argument('-ss', '--save_samples', type=bool, default=True, help='Whether or not to save generated samples')
-    parser.add_argument('-nso', '--num_samples', type=int, default=1, help='How many samples to generate')
+    parser.add_argument('-nbg', '--num_batches_generated', type=int, default=2, help='How many batches of samples to generate')
     parser.add_argument('-nsp', '--num_splits', type=int, default=10, help='How many splits to use for inception score')
     parser.add_argument('-i', '--data_dir', type=str, default='/tmp/pcnn-pp_data', help='Location for the dataset')
     # Below only used for graph definition
@@ -194,6 +194,8 @@ if __name__ == "__main__":
     if os.path.exists(samples_path):
         print('loading samples from {}'.format(samples_path))
         samples = np.load(samples_path)
+        print(samples)
+        print(list(samples))
         print('loaded {} samples'.format(len(samples)))
     else:
         saver, obs_shape, new_x_gen, xs = recreate_model(args)
@@ -202,14 +204,14 @@ if __name__ == "__main__":
             print('restoring parameters from {} ...'.format(checkpoint_path))
             saver.restore(sess, checkpoint_path)
 
-            print('generating {} samples...'.format(args.num_samples))
+            print('generating {} batches of {} samples...'.format(args.num_batches_generated, args.init_batch_size))
             samples = []
-            for i in range(args.num_samples):
+            for i in range(args.num_batches_generated):
                 samples.append(sample_from_model(sess, obs_shape, new_x_gen, xs))
 
             print('saving samples to {} ...'.format(samples_path))
-            samples = np.concatenate(samples,axis=0)
-            np.savez(samples_path, samples)
+            samples_np = np.concatenate(samples,axis=0)
+            np.savez(samples_path, samples_np)
     
     print('getting inception score on {} samples with {} splits...'.format(len(samples), args.num_splits))
     mean, var = inception.get_inception_score(samples, splits=args.num_splits)
