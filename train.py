@@ -22,8 +22,8 @@ from utils import plotting
 # -----------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 # data I/O
-parser.add_argument('-i', '--data_dir', type=str, default='/local_home/tim/pxpp/data', help='Location for the dataset')
-parser.add_argument('-o', '--save_dir', type=str, default='/local_home/tim/pxpp/save', help='Location for parameter checkpoints and samples')
+parser.add_argument('-i', '--data_dir', type=str, default='../data', help='Location for the dataset')
+parser.add_argument('-o', '--save_dir', type=str, default='save', help='Location for parameter checkpoints and samples')
 parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet')
 parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
@@ -34,6 +34,8 @@ parser.add_argument('-m', '--nr_logistic_mix', type=int, default=10, help='Numbe
 parser.add_argument('-z', '--resnet_nonlinearity', type=str, default='concat_elu', help='Which nonlinearity to use in the ResNet layers. One of "concat_elu", "elu", "relu" ')
 parser.add_argument('-c', '--class_conditional', dest='class_conditional', action='store_true', help='Condition generative model on labels?')
 parser.add_argument('-ed', '--energy_distance', dest='energy_distance', action='store_true', help='use energy distance in place of likelihood')
+parser.add_argument('-en', '--entropy', dest='entropy', action='store_true', help='Include -entropy term in loss, encouraging diversity?')
+parser.add_argument('-a', '--accumulator', type=str, default='standard', help='How to accumulate many samples losses into one batch loss')
 # optimization
 parser.add_argument('-l', '--learning_rate', type=float, default=0.001, help='Base learning rate')
 parser.add_argument('-e', '--lr_decay', type=float, default=0.999995, help='Learning rate decay, applied every step of the optimization')
@@ -44,11 +46,15 @@ parser.add_argument('-x', '--max_epochs', type=int, default=5000, help='How many
 parser.add_argument('-g', '--nr_gpu', type=int, default=8, help='How many GPUs to distribute the training across?')
 # evaluation
 parser.add_argument('--polyak_decay', type=float, default=0.9995, help='Exponential decay rate of the sum of previous model iterates during Polyak averaging')
-parser.add_argument('-ns', '--num_samples', type=int, default=1, help='How many batches of samples to output.')
+parser.add_argument('-ns', '--num_samples', type=int, default=2, help='How many batches of samples to output.')
 # reproducibility
 parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
+
+args.save_dir += '_{}_{}'.format(args.data_set,args.accumulator)
+if args.entropy:
+    raise('entropy is not implemented.')
 
 # -----------------------------------------------------------------------------
 # fix random seed for reproducibility
@@ -57,24 +63,42 @@ tf.set_random_seed(args.seed)
 
 # energy distance or maximum likelihood?
 if args.energy_distance:
-    loss_fun = nn.energy_distance
+    loss_fun = nn.energy_distance # todo: this is currently broken, because it does not take the same args as the following loss
 else:
     loss_fun = nn.discretized_mix_logistic_loss
 
 # initialize data loaders for train/test splits
-if args.data_set == 'imagenet' and args.class_conditional:
-    raise("We currently don't have labels for the small imagenet data set")
-if args.data_set == 'cifar':
-    import data.cifar10_data as cifar10_data
-    DataLoader = cifar10_data.DataLoader
-elif args.data_set == 'imagenet':
-    import data.imagenet_data as imagenet_data
-    DataLoader = imagenet_data.DataLoader
+if args.data_set in ['imagenet', 'cifar','cifar_sorted']:
+    if args.data_set == 'imagenet' and args.class_conditional:
+        raise("We currently don't have labels for the small imagenet data set")
+    if args.data_set == 'cifar':
+        import data.cifar10_data as cifar10_data
+        DataLoader = cifar10_data.DataLoader
+    elif args.data_set == 'cifar_sorted':
+        import data.cifar10_sorted_data as cifar10_sorted_data
+        DataLoader = cifar10_sorted_data.DataLoader
+    elif args.data_set == 'imagenet':
+        import data.imagenet_data as imagenet_data
+        DataLoader = imagenet_data.DataLoader
+    train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+    test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+    obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
+elif args.data_set.startswith('cifar'):
+    # one class of cifar
+    import data.cifar10_class_data as cifar10_class_data
+    DataLoader = cifar10_class_data.DataLoader
+    which_class = int(args.data_set.split('cifar')[1])
+    train_data = DataLoader(args.data_dir, which_class, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+    test_data = DataLoader(args.data_dir, which_class, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+    obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
 else:
-    raise("unsupported dataset")
-train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
-test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
-obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
+    if args.class_conditional:
+        raise("This is an unconditional dataset.")
+    import data.npz_data as from_file_data
+    DataLoader = from_file_data.DataLoader
+    train_data = DataLoader(args.data_dir, args.data_set, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+    test_data = DataLoader(args.data_dir, args.data_set, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+    obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
 assert len(obs_shape) == 3, 'assumed right now'
 
 # data place holders
@@ -117,14 +141,14 @@ for i in range(args.nr_gpu):
     with tf.device('/gpu:%d' % i):
         # train
         out = model(xs[i], hs[i], ema=None, dropout_p=args.dropout_p, **model_opt)
-        loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out))
+        loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out, args.accumulator, args.entropy))
 
         # gradients
         grads.append(tf.gradients(loss_gen[i], all_params, colocate_gradients_with_ops=True))
 
         # test
         out = model(xs[i], hs[i], ema=ema, dropout_p=0., **model_opt)
-        loss_gen_test.append(loss_fun(xs[i], out))
+        loss_gen_test.append(loss_fun(xs[i], out, args.accumulator, args.entropy))
 
         # sample
         out = model(xs[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
@@ -191,9 +215,10 @@ with tf.Session() as sess:
     for epoch in range(args.max_epochs):
         begin = time.time()
 
+        train_data.reset()  # rewind the iterator back to 0 to do one full epoch
+
         # init
         if epoch == 0:
-            train_data.reset()  # rewind the iterator back to 0 to do one full epoch
             if args.load_params:
                 ckpt_file = args.save_dir + '/params_' + args.data_set + '.ckpt'
                 print('restoring parameters from', ckpt_file)
@@ -236,7 +261,12 @@ with tf.Session() as sess:
             for i in range(args.num_samples):
                 sample_x.append(sample_from_model(sess))
             sample_x = np.concatenate(sample_x,axis=0)
-            img_tile = plotting.img_tile(sample_x[:100], aspect_ratio=1.0, border_color=1.0, stretch=True)
+            if args.class_conditional:
+                num_to_plot = args.num_samples*args.batch_size//train_data.num_classes
+                img_tile = plotting.img_tile(sample_x[:num_to_plot], aspect_ratio=1.0, border_color=1.0, stretch=True,
+                                             tile_shape=(num_to_plot//train_data.num_classes,train_data.num_classes))
+            else:
+                img_tile = plotting.img_tile(sample_x[:100], aspect_ratio=1.0, border_color=1.0, stretch=True)
             img = plotting.plot_img(img_tile, title=args.data_set + ' samples')
             plotting.plt.savefig(os.path.join(args.save_dir,'%s_sample%d.png' % (args.data_set, epoch)))
             plotting.plt.close('all')
