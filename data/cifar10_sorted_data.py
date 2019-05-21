@@ -73,7 +73,6 @@ class DataLoader(object):
         if not os.path.exists(data_dir):
             print('creating folder', data_dir)
             os.makedirs(data_dir)
-
         print('loading...')
         # load CIFAR-10 training data to RAM
         data, labels = load(os.path.join(data_dir,'cifar-10-python'), subset=subset)
