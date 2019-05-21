@@ -78,7 +78,7 @@ def load(data_dir, subset='train'):
         print('creating folder', data_dir)
         os.makedirs(data_dir)
     maybe_download_and_extract(data_dir)
-    maybe_preprocess(data_dir)
+    maybe_preprocess(data_sshdir)
     imagenet_data = np.load(os.path.join(data_dir,'imgnet_32x32.npz'))
     return imagenet_data['trainx'] if subset == 'train' else imagenet_data['testx']
 
