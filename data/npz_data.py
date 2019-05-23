@@ -17,7 +17,7 @@ from imageio import imread
 class DataLoader(object):
     """ an object that generates batches of Imagenet red fox images for training """
 
-    def __init__(self, data_dir, data_set, subset, batch_size, rng=None, shuffle=False, return_labels=False, **kwargs):
+    def __init__(self, data_dir, data_set, subset, batch_size, rng=None, shuffle=False, return_labels=False, custom_load_str=None, **kwargs):
         """ 
         - data_dir is location of the dir where the data is stored
         - subset is train|test 
@@ -31,7 +31,15 @@ class DataLoader(object):
         self.return_labels = return_labels
 
         loaded = np.load(os.path.join(data_dir, data_set+'.npz'))
-        self.data = loaded['trainx'] if subset == 'train' else loaded['testx']
+        print("custom_load_str:", custom_load_str)
+        if custom_load_str:
+            self.data = loaded[custom_load_str]
+            print(self.data.shape)
+            self.data = self.data[:1000]
+            print(self.data.shape)
+        else:
+            self.data = loaded['trainx'] if subset == 'train' else loaded['testx']
+        
         if self.return_labels:
             self.labels = loaded['trainy'] if subset == 'train' else loaded['testy']
         
@@ -55,7 +63,8 @@ class DataLoader(object):
         if self.p == 0 and self.shuffle:
             inds = self.rng.permutation(self.data.shape[0])
             self.data = self.data[inds]
-            self.labels = self.labels[inds]
+            if self.return_labels:
+                self.labels = self.labels[inds]
 
         # on last iteration reset the counter and raise StopIteration
         if self.p + n > self.data.shape[0]:
@@ -64,7 +73,8 @@ class DataLoader(object):
 
         # on intermediate iterations fetch the next batch
         x = self.data[self.p : self.p + n]
-        y = self.labels[self.p : self.p + n]
+        if self.return_labels:
+            y = self.labels[self.p : self.p + n]
         self.p += self.batch_size
 
         if self.return_labels:

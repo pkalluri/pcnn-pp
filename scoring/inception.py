@@ -1,5 +1,3 @@
-
-
 # Code derived from tensorflow/tensorflow/models/image/imagenet/classify_image.py
 from __future__ import absolute_import
 from __future__ import division
@@ -23,7 +21,7 @@ softmax = None
 
 # Call this function with list of images. Each of elements should be a 
 # numpy array with values ranging from 0 to 255.
-def get_inception_score(images, splits=1):
+def get_inception_score(images, splits=10):
   assert(type(images) == list)
   assert(type(images[0]) == np.ndarray)
   assert(len(images[0].shape) == 3)
@@ -45,22 +43,12 @@ def get_inception_score(images, splits=1):
         pred = sess.run(softmax, {'ExpandDims:0': inp})
         preds.append(pred)
     preds = np.concatenate(preds, 0)
-    # print()
-    # print('pred.shape:', preds.shape)
     scores = []
-    quality_distributions = []
-    diversity_distributions = []
     for i in range(splits):
-      part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :] # b,h,w,3 ?
-      # print('part.shape:', part.shape)
-      # kl_term2 = - np.log(np.expand_dims(np.mean(part, 0), 0))
-      # print(kl_term2.shape)
+      part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :]
       kl = part * (np.log(part) - np.log(np.expand_dims(np.mean(part, 0), 0)))
-      # print('kl1.shape:', kl.shape)
       kl = np.mean(np.sum(kl, 1))
-      # print('kl2.shape:', kl.shape)
       scores.append(np.exp(kl))
-      # print('scores[0].shape:', scores[0].shape)
     return np.mean(scores), np.std(scores), preds
 
 # This function is called automatically.

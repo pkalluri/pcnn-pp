@@ -8,6 +8,7 @@ import sys
 import tarfile
 from six.moves import urllib
 import numpy as np
+#from PIL import Image
 
 def maybe_download_and_extract(data_dir, url='http://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'):
     if not os.path.exists(os.path.join(data_dir, 'cifar-10-batches-py')):
@@ -76,6 +77,7 @@ class DataLoader(object):
         # load CIFAR-10 training data to RAM
         self.data, self.labels = load(os.path.join(data_dir,'cifar-10-python'), subset=subset)
         self.data = np.transpose(self.data, (0,2,3,1)) # (N,3,32,32) -> (N,32,32,3)
+        #np.savez('../../data/cifar.npz', trainx=self.data)
         
         self.p = 0 # pointer to where we are in iteration
         self.rng = np.random.RandomState(1) if rng is None else rng
@@ -119,4 +121,13 @@ class DataLoader(object):
 
     next = __next__  # Python 2 compatibility (https://stackoverflow.com/questions/29578469/how-to-make-an-object-both-a-python2-and-python3-iterator)
 
+# Testing sorted data loader
+if __name__ == "__main__":
+    batch_size = 16
+    nr_gpu = 8
+    train_data = DataLoader('../../data', 'train', batch_size * nr_gpu, rng=None, shuffle=True, return_labels=True)
+    imgs,labels = train_data.next()
+    print(labels)
+    for i in range(10):
+        Image.fromarray(imgs[i]).show()
 
