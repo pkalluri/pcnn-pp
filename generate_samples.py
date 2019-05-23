@@ -19,14 +19,24 @@ from scoring import inception
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-ov', '--overwrite_samples', dest='overwrite_samples', action='store_true', help='Overwrite generated files?')
-    parser.add_argument('-args', '--args_file', type=str, default='save/_713925_samples/713925.out', help='.out file to parse arguments from and overwrite any of the below')
-    parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_713925_samples', help='Directory where the checkpoint files (and possibly samples) live')
-    #parser.add_argument('-cp', '--checkpoint_prefix', type=str, default='params_cifar.ckpt', help='Checkpoint files prefix')
+    #parser.add_argument('-args', '--args_file', type=str, default='', help='.out file to parse arguments from and overwrite any of the below')
+    #parser.add_argument('-args', '--args_file', type=str, default='save/713925.out', help='.out file to parse arguments from and overwrite any of the below')
+    #parser.add_argument('-args', '--args_file', type=str, default='save/714767.out', help='out file to parse arguments from and overwrite any of the below')
+    #parser.add_argument('-args', '--args_file', type=str, default='save_neurips/716587.out', help='out file to parse arguments from and overwrite any of the below')
+    parser.add_argument('-args', '--args_file', type=str, default='', help='out file to parse arguments from and overwrite any of the below')
+    #parser.add_argument('-args', '--args_file', type=str, default='', help='out file to parse arguments from and overwrite any of the below')
+    #parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_cifar_st_samples', help='Directory where the checkpoint files (and possibly samples) live')
+    #parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_713925_samples', help='Directory where the checkpoint files (and possibly samples) live')
+    #parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_714767_samples', help='Directory where the checkpoint files (and possibly samples) live')
+    #parser.add_argument('-o', '--checkpoint_dir', type=str, default='save_neurips/_716587_samples', help='Directory where the checkpoint files (and possibly samples) live')
+    parser.add_argument('-o', '--checkpoint_dir', type=str, default='../data/', help='Directory where the checkpoint files (and possibly samples) live')
+    #parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_697740', help='Directory where the checkpoint files (and possibly samples) live')
+    parser.add_argument('-cp', '--checkpoint_prefix', type=str, default=None, help='Checkpoint files prefix')
     # parser.add_argument('-ss', '--save_samples', type=bool, default=True, help='Whether or not to save generated samples')
     parser.add_argument('-nbg', '--num_batches_generated', type=int, default=100, help='How many batches of samples to generate')
-    parser.add_argument('-b', '--batch_size', type=int, default=10, help='Batch size for generation')
+    parser.add_argument('-b', '--batch_size_generator', type=int, default=10, help='Batch size for generation')
     parser.add_argument('-u', '--init_batch_size', type=int, default=16, help='How much data to use for data-dependent initialization.')
-    parser.add_argument('-nsp', '--num_splits', type=int, default=10, help='How many splits to use for inception score')
+    parser.add_argument('-nsp', '--num_splits', type=int, default=1, help='How many splits to use for inception score')
     parser.add_argument('-i', '--data_dir', type=str, default='/tmp/pcnn-pp_data', help='Location for the dataset')
     # Below only used for graph definition
     # --------------------------------
@@ -57,9 +67,10 @@ def get_args():
     parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
     # --------------------------------
     args = parser.parse_args()
-    overwrite_args = read_args_from_out_file(args.args_file)
-    d = vars(args)
-    d.update(overwrite_args)
+    if args.args_file:
+        overwrite_args = read_args_from_out_file(args.args_file)
+        d = vars(args)
+        d.update(overwrite_args)
     print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
     return args
 
@@ -91,42 +102,53 @@ def recreate_model(args):
         loss_fun = nn.discretized_mix_logistic_loss
 
     # initialize data loaders for train/test splits
-    if args.data_set == 'imagenet' and args.class_conditional:
-        raise("We currently don't have labels for the small imagenet data set")
-    if args.data_set == 'cifar' or args.data_set == 'cifar1':
-        import data.cifar10_data as cifar10_data
-        DataLoader = cifar10_data.DataLoader
-    elif args.data_set == 'imagenet':
-        import data.imagenet_data as imagenet_data
-        DataLoader = imagenet_data.DataLoader
-    elif args.data_set == 'imagenet_large':
-        import data.imagenet_large_data as imagenet_large_data
-        DataLoader = imagenet_large_data.DataLoader
-    elif args.data_set == 'imagenet_small':
-        import data.imagenet_small_data as imagenet_small_data
-        DataLoader = imagenet_small_data.DataLoader
+    if args.data_set in ['imagenet', 'cifar','cifar_sorted']:
+        if args.data_set == 'imagenet' and args.class_conditional:
+            raise("We currently don't have labels for the small imagenet data set")
+        if args.data_set == 'cifar':
+            import data.cifar10_data as cifar10_data
+            DataLoader = cifar10_data.DataLoader
+        elif args.data_set == 'cifar_sorted':
+            import data.cifar10_sorted_data as cifar10_sorted_data
+            DataLoader = cifar10_sorted_data.DataLoader
+        elif args.data_set == 'imagenet':
+            import data.imagenet_data as imagenet_data
+            DataLoader = imagenet_data.DataLoader
+        train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+        test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+        obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
+    elif args.data_set.startswith('cifar'):
+        # one class of cifar
+        import data.cifar10_class_data as cifar10_class_data
+        DataLoader = cifar10_class_data.DataLoader
+        which_class = int(args.data_set.split('cifar')[1])
+        train_data = DataLoader(args.data_dir, which_class, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+        test_data = DataLoader(args.data_dir, which_class, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+        obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
     else:
-        raise("unsupported dataset")
-    print("creating train_data DataLoader...")
-    train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
-    # test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
-    obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
-    assert len(obs_shape) == 3, 'assumed right now'
+        # if args.class_conditional:
+        #     raise("This is an unconditional dataset.")
+        import data.npz_data as from_file_data
+        DataLoader = from_file_data.DataLoader
+        train_data = DataLoader(args.data_dir, args.data_set, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
+        test_data = DataLoader(args.data_dir, args.data_set, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+        obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
+    # assert len(obs_shape) == 3, 'assumed right now'
 
     # data place holders
     print("creating data place holders...")
-    x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
-    xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
+    x_init = tf.placeholder(tf.float32, shape=(args.batch_size_generator,) + obs_shape)
+    xs = [tf.placeholder(tf.float32, shape=(args.batch_size_generator, ) + obs_shape) for i in range(args.nr_gpu)]
 
     # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
     if args.class_conditional:
         print("creating label placeholders...")
         num_labels = train_data.get_num_labels()
-        y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
+        y_init = tf.placeholder(tf.int32, shape=(args.batch_size_generator,))
         h_init = tf.one_hot(y_init, num_labels)
-        y_sample = np.split(np.mod(np.arange(args.batch_size*args.nr_gpu), num_labels), args.nr_gpu)
+        y_sample = np.split(np.mod(np.arange(args.batch_size_generator*args.nr_gpu), num_labels), args.nr_gpu)
         h_sample = [tf.one_hot(tf.Variable(y_sample[i], trainable=False), num_labels) for i in range(args.nr_gpu)]
-        ys = [tf.placeholder(tf.int32, shape=(args.batch_size,)) for i in range(args.nr_gpu)]
+        ys = [tf.placeholder(tf.int32, shape=(args.batch_size_generator,)) for i in range(args.nr_gpu)]
         hs = [tf.one_hot(ys[i], num_labels) for i in range(args.nr_gpu)]
     else:
         h_init = None
@@ -186,8 +208,8 @@ def recreate_model(args):
         optimizer = tf.group(nn.adam_updates(all_params, grads[0], lr=tf_lr, mom1=0.95, mom2=0.9995), maintain_averages_op)
 
     # convert loss to bits/dim
-    bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
-    bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
+    #bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
+    #bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
 
     # init & save
     print("generating initializer and saver...")
@@ -197,7 +219,7 @@ def recreate_model(args):
     return saver, obs_shape, new_x_gen, xs
 
 def sample_from_model(sess, obs_shape, new_x_gen, xs):
-    x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
+    x_gen = [np.zeros((args.batch_size_generator,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             new_x_gen_np = sess.run(new_x_gen, {xs[i]: x_gen[i] for i in range(args.nr_gpu)})
@@ -221,16 +243,23 @@ def get_inception_scores_and_write_predictions(samples, num_splits, pred_path):
 if __name__ == "__main__":
     args = get_args()
 
-    ckpt_file = 'params_' + args.data_set + '.ckpt'
-    ckpt_path = os.path.join(args.checkpoint_dir, ckpt_file)
+    if args.checkpoint_prefix:
+        ckpt_file = args.checkpoint_prefix
+    else:
+        ckpt_file = 'params_' + args.data_set + '.ckpt'
 
-    all_samples_path = os.path.join(args.checkpoint_dir,'all_samples_from_%s.npz' % (ckpt_file))
-    all_preds_path = os.path.join(args.checkpoint_dir,'all_preds_on_samples_from_%s.npz' % (ckpt_file))
+    # ckpt_path = os.path.join(args.checkpoint_dir, ckpt_file)
+    # all_samples_path = os.path.join(args.checkpoint_dir,'all_samples_from_%s.npz' % (ckpt_file))
+    # all_preds_path = os.path.join(args.checkpoint_dir,'all_preds_on_samples_from_%s.npz' % (ckpt_file))
+    all_samples_path = os.path.join(args.checkpoint_dir,'cifar.npz')
+    all_preds_path = os.path.join(args.checkpoint_dir,'preds_cifar.npz')
 
     if not args.overwrite_samples and os.path.exists(all_samples_path):
         print('loading samples from {}'.format(all_samples_path))
-        samples = list(np.load(all_samples_path)['samples_np'])
-        print('loaded {} samples'.format(len(samples)))
+        samples_np = np.load(all_samples_path)['trainx']
+        #samples_np = np.load(all_samples_path)['samples_np']
+        samples_list = list(samples_np)
+        print('loaded {} samples'.format(len(samples_list)))
     else:
         saver, obs_shape, new_x_gen, xs = recreate_model(args)
         with tf.Session() as sess:
@@ -238,25 +267,30 @@ if __name__ == "__main__":
             saver.restore(sess, ckpt_path)
 
             # TODO split up saved batches into multiple files to avoid OOM, maybe
-            print('generating {} batches of {} samples...'.format(args.num_batches_generated, args.init_batch_size))
+            print('generating {} batches of {} samples...'.format(args.num_batches_generated, args.batch_size_generator))
             samples = []
+            save_interval = 10
+            save_interval_counter = 1
             for i in range(args.num_batches_generated):
                 print('generating batch {}...'.format(i))
                 samples.append(sample_from_model(sess, obs_shape, new_x_gen, xs))
 
-                if len(samples) % 100 == 0:
-                    intermediate_samples_path = os.path.join(args.checkpoint_dir,'%d_samples_from_%s.npz' % (len(samples), ckpt_file))
-                    print('saving samples to {} ...'.format(intermediate_samples_path))
-                    samples_np = np.concatenate(samples,axis=0)
-                    np.savez(intermediate_samples_path, samples_np=samples_np)
-                    samples = list(samples_np)
+                samples_np = np.concatenate(samples,axis=0)
+                samples_list = list(samples_np)
+                print(len(samples_list), save_interval_counter * save_interval)
 
-                    intermediate_pred_path = os.path.join(args.checkpoint_dir,'%d_preds_on_samples_from_%s.npz' % (len(samples), ckpt_file))
-                    get_inception_scores_and_write_predictions(samples, args.num_splits, intermediate_pred_path)
+                if len(samples_list) >= (save_interval_counter * save_interval):
+                    intermediate_samples_path = os.path.join(args.checkpoint_dir,'%d_samples_from_%s.npz' % (len(samples_list), ckpt_file))
+                    print('saving samples to {} ...'.format(intermediate_samples_path))
+                    np.savez(intermediate_samples_path, samples_np=samples_np)
+                    samples_for_pred = list(samples_np)
+
+                    intermediate_pred_path = os.path.join(args.checkpoint_dir,'%d_preds_on_samples_from_%s.npz' % (len(samples_list), ckpt_file))
+                    get_inception_scores_and_write_predictions(samples_list, args.num_splits, intermediate_pred_path)
+
+                    save_interval_counter += 1
 
         print('saving samples to {} ...'.format(all_samples_path))
-        samples_np = np.concatenate(samples,axis=0)
         np.savez(all_samples_path, samples_np=samples_np)
-        samples = list(samples_np)
 
-    get_inception_scores_and_write_predictions(samples, args.num_splits, all_preds_path)
+    get_inception_scores_and_write_predictions(samples_list, args.num_splits, all_preds_path)
