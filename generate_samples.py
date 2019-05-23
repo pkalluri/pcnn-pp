@@ -19,22 +19,21 @@ from scoring import inception
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-ov', '--overwrite_samples', dest='overwrite_samples', action='store_true', help='Overwrite generated files?')
-    parser.add_argument('-args', '--args_file', type=str, default='', help='.out file to parse arguments from and overwrite any of the below')
-    parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/697740-cifar', help='Directory where the checkpoint files (and possibly samples) live')
-    parser.add_argument('-cp', '--checkpoint_prefix', type=str, default='params_cifar.ckpt', help='Checkpoint files prefix')
+    parser.add_argument('-args', '--args_file', type=str, default='save/_713925_samples/713925.out', help='.out file to parse arguments from and overwrite any of the below')
+    parser.add_argument('-o', '--checkpoint_dir', type=str, default='save/_713925_samples', help='Directory where the checkpoint files (and possibly samples) live')
+    #parser.add_argument('-cp', '--checkpoint_prefix', type=str, default='params_cifar.ckpt', help='Checkpoint files prefix')
     # parser.add_argument('-ss', '--save_samples', type=bool, default=True, help='Whether or not to save generated samples')
-    parser.add_argument('-nbg', '--num_batches_generated', type=int, default=10, help='How many batches of samples to generate')
-    parser.add_argument('-b', '--batch_size', type=int, default=128, help='Batch size for generation')
+    parser.add_argument('-nbg', '--num_batches_generated', type=int, default=100, help='How many batches of samples to generate')
+    parser.add_argument('-b', '--batch_size', type=int, default=10, help='Batch size for generation')
     parser.add_argument('-u', '--init_batch_size', type=int, default=16, help='How much data to use for data-dependent initialization.')
     parser.add_argument('-nsp', '--num_splits', type=int, default=10, help='How many splits to use for inception score')
     parser.add_argument('-i', '--data_dir', type=str, default='/tmp/pcnn-pp_data', help='Location for the dataset')
     # Below only used for graph definition
-    # TODO this is all rather brittle. Can move to SavedModel approach maybe https://www.tensorflow.org/guide/saved_model#save_and_restore_models
     # --------------------------------
     #parser.add_argument('-i', '--data_dir', type=str, default='../data', help='Location for the dataset')
     #parser.add_argument('-o', '--save_dir', type=str, default='save', help='Location for parameter checkpoints and samples')
     parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet')
-    parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
+    #parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
     parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
     # model
     parser.add_argument('-q', '--nr_resnet', type=int, default=5, help='Number of residual blocks per stage of the model')
@@ -57,10 +56,28 @@ def get_args():
     # reproducibility
     parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to use')
     # --------------------------------
-    # TODO overwrite parsed args with args read from a .out file, if passed in
     args = parser.parse_args()
+    overwrite_args = read_args_from_out_file(args.args_file)
+    d = vars(args)
+    d.update(overwrite_args)
     print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
     return args
+
+def read_args_from_out_file(filename):
+    with open(filename, 'r') as f:
+        json_string = ''
+        reading_json = False
+        for line in f:
+            if reading_json:
+                json_string += line.strip()
+                if line.startswith('}'):
+                    reading_json = False
+
+            if line.startswith('input args:'):
+                reading_json = True
+    
+    data = json.loads(json_string)
+    return data
 
 def recreate_model(args):
     # fix random seed for reproducibility
@@ -76,7 +93,7 @@ def recreate_model(args):
     # initialize data loaders for train/test splits
     if args.data_set == 'imagenet' and args.class_conditional:
         raise("We currently don't have labels for the small imagenet data set")
-    if args.data_set == 'cifar':
+    if args.data_set == 'cifar' or args.data_set == 'cifar1':
         import data.cifar10_data as cifar10_data
         DataLoader = cifar10_data.DataLoader
     elif args.data_set == 'imagenet':
@@ -184,38 +201,62 @@ def sample_from_model(sess, obs_shape, new_x_gen, xs):
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             new_x_gen_np = sess.run(new_x_gen, {xs[i]: x_gen[i] for i in range(args.nr_gpu)})
+            sys.stdout.write(".")
+            sys.stdout.flush()
             for i in range(args.nr_gpu):
                 x_gen[i][:,yi,xi,:] = new_x_gen_np[i][:,yi,xi,:]
+    print()
     return np.concatenate(x_gen, axis=0)
+
+def get_inception_scores_and_write_predictions(samples, num_splits, pred_path):
+    print('getting inception score on {} samples with {} splits...'.format(len(samples), num_splits))
+    process = lambda img: ((img+1)*255/2).astype('uint8')
+    samples = [process(s) for s in samples]
+    mean, var, preds = inception.get_inception_score(samples, splits=args.num_splits)
+    print('inception score: mean={}, variance={}'.format(mean, var))
+
+    print('saving predictions to {} ...'.format(pred_path))
+    np.savez(pred_path, preds=preds)
 
 if __name__ == "__main__":
     args = get_args()
 
-    samples_path = os.path.join(args.checkpoint_dir,'samples_from_%s.npz' % (args.checkpoint_prefix))
-    if not args.overwrite_samples and os.path.exists(samples_path):
-        print('loading samples from {}'.format(samples_path))
-        samples = list(np.load(samples_path)['samples_np'])
+    ckpt_file = 'params_' + args.data_set + '.ckpt'
+    ckpt_path = os.path.join(args.checkpoint_dir, ckpt_file)
+
+    all_samples_path = os.path.join(args.checkpoint_dir,'all_samples_from_%s.npz' % (ckpt_file))
+    all_preds_path = os.path.join(args.checkpoint_dir,'all_preds_on_samples_from_%s.npz' % (ckpt_file))
+
+    if not args.overwrite_samples and os.path.exists(all_samples_path):
+        print('loading samples from {}'.format(all_samples_path))
+        samples = list(np.load(all_samples_path)['samples_np'])
         print('loaded {} samples'.format(len(samples)))
     else:
         saver, obs_shape, new_x_gen, xs = recreate_model(args)
         with tf.Session() as sess:
-            checkpoint_path = os.path.join(args.checkpoint_dir, args.checkpoint_prefix)
-            print('restoring parameters from {} ...'.format(checkpoint_path))
-            saver.restore(sess, checkpoint_path)
+            print('restoring parameters from {} ...'.format(ckpt_path))
+            saver.restore(sess, ckpt_path)
 
+            # TODO split up saved batches into multiple files to avoid OOM, maybe
             print('generating {} batches of {} samples...'.format(args.num_batches_generated, args.init_batch_size))
             samples = []
             for i in range(args.num_batches_generated):
+                print('generating batch {}...'.format(i))
                 samples.append(sample_from_model(sess, obs_shape, new_x_gen, xs))
 
-            print('saving samples to {} ...'.format(samples_path))
-            samples_np = np.concatenate(samples,axis=0)
-            np.savez(samples_path, samples_np=samples_np)
-            samples = list(samples_np)
-    
-    print('getting inception score on {} samples with {} splits...'.format(len(samples), args.num_splits))
-    process = lambda img: ((img+1)*255/2).astype('uint8')
-    samples = [process(s) for s in samples]
-    mean, var = inception.get_inception_score(samples, splits=args.num_splits)
-    print('Inception Score: mean={}, variance={}'.format(mean, var))
+                if len(samples) % 100 == 0:
+                    intermediate_samples_path = os.path.join(args.checkpoint_dir,'%d_samples_from_%s.npz' % (len(samples), ckpt_file))
+                    print('saving samples to {} ...'.format(intermediate_samples_path))
+                    samples_np = np.concatenate(samples,axis=0)
+                    np.savez(intermediate_samples_path, samples_np=samples_np)
+                    samples = list(samples_np)
 
+                    intermediate_pred_path = os.path.join(args.checkpoint_dir,'%d_preds_on_samples_from_%s.npz' % (len(samples), ckpt_file))
+                    get_inception_scores_and_write_predictions(samples, args.num_splits, intermediate_pred_path)
+
+        print('saving samples to {} ...'.format(all_samples_path))
+        samples_np = np.concatenate(samples,axis=0)
+        np.savez(all_samples_path, samples_np=samples_np)
+        samples = list(samples_np)
+
+    get_inception_scores_and_write_predictions(samples, args.num_splits, all_preds_path)

@@ -17,13 +17,13 @@ import scipy.misc
 import math
 import sys
 
-MODEL_DIR = '/tmp/imagenet'
+MODEL_DIR = '../imagenet_model'
 DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
 softmax = None
 
 # Call this function with list of images. Each of elements should be a 
 # numpy array with values ranging from 0 to 255.
-def get_inception_score(images, splits=10):
+def get_inception_score(images, splits=1):
   assert(type(images) == list)
   assert(type(images[0]) == np.ndarray)
   assert(len(images[0].shape) == 3)
@@ -45,13 +45,23 @@ def get_inception_score(images, splits=10):
         pred = sess.run(softmax, {'ExpandDims:0': inp})
         preds.append(pred)
     preds = np.concatenate(preds, 0)
+    # print()
+    # print('pred.shape:', preds.shape)
     scores = []
+    quality_distributions = []
+    diversity_distributions = []
     for i in range(splits):
-      part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :]
+      part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :] # b,h,w,3 ?
+      # print('part.shape:', part.shape)
+      # kl_term2 = - np.log(np.expand_dims(np.mean(part, 0), 0))
+      # print(kl_term2.shape)
       kl = part * (np.log(part) - np.log(np.expand_dims(np.mean(part, 0), 0)))
+      # print('kl1.shape:', kl.shape)
       kl = np.mean(np.sum(kl, 1))
+      # print('kl2.shape:', kl.shape)
       scores.append(np.exp(kl))
-    return np.mean(scores), np.std(scores)
+      # print('scores[0].shape:', scores[0].shape)
+    return np.mean(scores), np.std(scores), preds
 
 # This function is called automatically.
 def _init_inception():
@@ -96,24 +106,3 @@ def _init_inception():
 
 if softmax is None:
   _init_inception()
-
-# Testing
-if __name__ == "__main__":
-    from data import cifar10_data
-    batch_size = 16
-    nr_gpu = 8
-    train_data = cifar10_data.DataLoader('data', 'train', batch_size * nr_gpu, rng=None, shuffle=True, return_labels=False)
-    images = train_data.next(100)
-    images = list(images)
-    print(type(images))
-    print(type(images[0]))
-    print(len(images[0].shape))
-    print(np.max(images[0]))
-    print(np.min(images[0]))
-    assert(type(images) == list)
-    assert(type(images[0]) == np.ndarray)
-    assert(len(images[0].shape) == 3)
-    assert(np.max(images[0]) > 10)
-    assert(np.min(images[0]) >= 0.0)
-    score = get_inception_score(images)
-    print(score)

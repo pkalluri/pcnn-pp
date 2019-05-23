@@ -1,0 +1,6 @@
+save/
+.idea/
+data/cifar-10-python/
+scoring/dat
+imagenet_model/
+test_predz.npz
