@@ -15,7 +15,7 @@
 # echo "SLURMTMPDIR="$SLURMTMPDIR
 echo "working directory = "$SLURM_SUBMIT_DIR
 
-srun /sailhome/pkalluri/.conda/envs/pkalluri-pyp3.6.8/bin/python get_entropy.py -g 1
+srun /sailhome/pkalluri/.conda/envs/pkalluri-pyp3.6.8/bin/python get_entropy.py -p save/_714767_samples/all_samples_from_params_cifar1.ckpt.npz -pd save/714767
 
 # can try the following to list out which GPU you have access to
 # srun /usr/local/cuda/samples/1_Utilities/deviceQuery/deviceQuery
