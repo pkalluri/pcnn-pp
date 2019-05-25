@@ -56,16 +56,24 @@ if __name__ == "__main__":
         samples = np.load(args.samples_path)[args.samples_data_key_]
         samples = list(samples)
         if args.num_predictions_:
-            samples = samples[:args.num_predictions]
+            samples = samples[:args.num_predictions_]
+
+        print(np.min(samples[0]))
+        print(np.max(samples[0]))
+
         process = lambda img: ((img + 1) * 255 / 2).astype('uint8')
         samples = [process(s) for s in samples]
+
+        print(np.min(samples[0]))
+        print(np.max(samples[0]))
+
         print('getting predictions on {} samples...'.format(len(samples)))
         preds = inception.get_inception_preds(samples)
         print('saving predictions to {} ...'.format(preds_path))
         np.savez(preds_path, preds=preds)
 
     if args.num_predictions_:
-        preds = preds[:args.num_predictions]
+        preds = preds[:args.num_predictions_]
     print('getting inception score on {} predictions with {} splits...'.format(len(list(preds)), args.num_splits_))
     mean, var = inception.get_inception_score_from_preds(preds, splits=args.num_splits_)
     print('inception score: mean={}, variance={}'.format(mean, var))
