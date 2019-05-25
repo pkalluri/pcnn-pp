@@ -24,11 +24,11 @@ def get_args():
     # The underscores are added so that none of the args will be overwritten by the args from the .out file
 
     # Oft-changed parameters
-    parser.add_argument('-a', '--args_file_', type=str, default='save_neurips/716490.out', help='The .out file to parse arguments from for graph generation')
-    parser.add_argument('-pd', '--params_dir_', required=True, type=str, help='The directory where the checkpoint parameters live: example is save/pretrained')
-    parser.add_argument('-v', '--sampling_variance', type=float, default=None, help='Sampling variance')
+    parser.add_argument('-pd', '--params_dir_', required=True, type=str, help='The directory where the checkpoint parameters live. Example: save/pretrained')
+    parser.add_argument('-v', '--sampling_variance', type=float, default=None, help='Sampling variance - we typically either leave out (0) or set to 0.2')
 
     # Defaulted parameters
+    parser.add_argument('-a', '--args_file_', type=str, default=None, help='The .out file to parse arguments from for graph generation')
     parser.add_argument('-cp', '--checkpoint_prefix_', type=str, default=None, help='Checkpoint files prefix - ex. cifar_params.cpkt')
     parser.add_argument('-nb', '--num_batches_', type=int, default=5000, help='How many batches of samples to generate')
     parser.add_argument('-b', '--batch_size_', type=int, default=10, help='Batch size for generation')
@@ -37,7 +37,13 @@ def get_args():
     parser.add_argument('-g', '--nr_gpu_', type=int, default=1, help='How many GPUs to distribute the training across?')
 
     args = parser.parse_args()
-    args = overwrite_args_from_out_file(args.args_file_, args)
+
+    if args.args_file:
+        args_file = args.args_file_
+    else:
+        args_file = args.params_dir_ + '.out'
+
+    args = overwrite_args_from_out_file(args_file, args)
 
     print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
     return args
