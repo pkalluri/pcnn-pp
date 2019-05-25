@@ -1,20 +1,13 @@
 """
-Given a Tensorflow generative model, outputs its inception score
+Recreate a tensorflow model from input args
 """
-
-import os
-import sys
-import json
-import argparse
-import time
 
 import numpy as np
 import tensorflow as tf
 
 from pixel_cnn_pp import nn
 from pixel_cnn_pp.model import model_spec
-from utils import plotting, args_reading
-from scoring import inception
+
 
 def recreate_model(args, batch_size_generator):
     # fix random seed for reproducibility
@@ -41,7 +34,6 @@ def recreate_model(args, batch_size_generator):
             import data.imagenet_data as imagenet_data
             DataLoader = imagenet_data.DataLoader
         train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
-        # test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
         obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
     elif args.data_set.startswith('cifar'):
         # one class of cifar
@@ -52,14 +44,10 @@ def recreate_model(args, batch_size_generator):
         test_data = DataLoader(args.data_dir, which_class, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
         obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
     else:
-        # if args.class_conditional:
-        #     raise("This is an unconditional dataset.")
         import data.npz_data as from_file_data
         DataLoader = from_file_data.DataLoader
         train_data = DataLoader(args.data_dir, args.data_set, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
-        # test_data = DataLoader(args.data_dir, args.data_set, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
         obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
-    # assert len(obs_shape) == 3, 'assumed right now'
 
     # data place holders
     print("creating data place holders...")
@@ -93,8 +81,6 @@ def recreate_model(args, batch_size_generator):
     # keep track of moving average
     all_params = tf.trainable_variables()
     ema = tf.train.ExponentialMovingAverage(decay=args.polyak_decay)
-    maintain_averages_op = tf.group(ema.apply(all_params))
-    # ema_params = [ema.average(p) for p in all_params]
 
     # # get loss gradients over multiple GPUs + sampling
     grads = []
@@ -126,19 +112,12 @@ def recreate_model(args, batch_size_generator):
                     new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
     # add losses and gradients together and get training updates
-    tf_lr = tf.placeholder(tf.float32, shape=[])
     with tf.device('/gpu:0'):
         for i in range(1,args.nr_gpu):
             loss_gen[0] += loss_gen[i]
             loss_gen_test[0] += loss_gen_test[i]
             for j in range(len(grads[0])):
                 grads[0][j] += grads[i][j]
-        # training op
-        # optimizer = tf.group(nn.adam_updates(all_params, grads[0], lr=tf_lr, mom1=0.95, mom2=0.9995), maintain_averages_op)
-
-    # convert loss to bits/dim
-    #bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
-    #bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size_generator)
 
     # init & save
     print("generating initializer and saver...")
