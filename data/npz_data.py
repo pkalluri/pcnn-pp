@@ -31,12 +31,10 @@ class DataLoader(object):
         self.return_labels = return_labels
 
         loaded = np.load(os.path.join(data_dir, data_set+'.npz'))
+
         print("custom_load_str:", custom_load_str)
         if custom_load_str:
             self.data = loaded[custom_load_str]
-            print(self.data.shape)
-            self.data = self.data[:1000]
-            print(self.data.shape)
         else:
             self.data = loaded['trainx'] if subset == 'train' else loaded['testx']
         

@@ -42,6 +42,9 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
 
+    entropy = False
+    nr_gpu = 1
+
     samples_dir, samples_dataset = os.path.split(args.samples_path_)
     samples_dataset = samples_dataset.rstrip('.npz')
     print('samples dir: {}, samples dataset: {}'.format(samples_dir, samples_dataset))
@@ -56,7 +59,7 @@ if __name__ == "__main__":
     print('initializing data loader...')
     import data.npz_data as from_file_data
     DataLoader = from_file_data.DataLoader
-    train_data = DataLoader(samples_dir, samples_dataset, 'train', args.batch_size * args.nr_gpu, rng=rng,
+    train_data = DataLoader(samples_dir, samples_dataset, 'train', args.batch_size * nr_gpu, rng=rng,
                             shuffle=True, return_labels=args.class_conditional,
                             custom_load_str=args.custom_load_string_)
     obs_shape = train_data.get_observation_size()  # e.g. a tuple (32,32,3)
@@ -64,20 +67,20 @@ if __name__ == "__main__":
     # data place holders
     print('data place holders...')
     x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
-    xs = [tf.placeholder(tf.float32, shape=(args.batch_size,) + obs_shape) for i in range(args.nr_gpu)]
+    xs = [tf.placeholder(tf.float32, shape=(args.batch_size,) + obs_shape) for i in range(nr_gpu)]
 
     # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
     if args.class_conditional:
         num_labels = train_data.get_num_labels()
         y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
         h_init = tf.one_hot(y_init, num_labels)
-        y_sample = np.split(np.mod(np.arange(args.batch_size * args.nr_gpu), num_labels), args.nr_gpu)
-        h_sample = [tf.one_hot(tf.Variable(y_sample[i], trainable=False), num_labels) for i in range(args.nr_gpu)]
-        ys = [tf.placeholder(tf.int32, shape=(args.batch_size,)) for i in range(args.nr_gpu)]
-        hs = [tf.one_hot(ys[i], num_labels) for i in range(args.nr_gpu)]
+        y_sample = np.split(np.mod(np.arange(args.batch_size * nr_gpu), num_labels), nr_gpu)
+        h_sample = [tf.one_hot(tf.Variable(y_sample[i], trainable=False), num_labels) for i in range(nr_gpu)]
+        ys = [tf.placeholder(tf.int32, shape=(args.batch_size,)) for i in range(nr_gpu)]
+        hs = [tf.one_hot(ys[i], num_labels) for i in range(nr_gpu)]
     else:
         h_init = None
-        h_sample = [None] * args.nr_gpu
+        h_sample = [None] * nr_gpu
         hs = h_sample
 
     # create the model
@@ -93,20 +96,20 @@ if __name__ == "__main__":
     # loss gen
     print('create loss gen...')
     loss_gen = []
-    for i in range(args.nr_gpu):
+    for i in range(nr_gpu):
         with tf.device('/gpu:%d' % i):
             out = model(xs[i], hs[i], ema=None, dropout_p=args.dropout_p, **model_opt)
-            loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out, "log_prod", args.entropy))
+            loss_gen.append(loss_fun(tf.stop_gradient(xs[i]), out, "log_prod", entropy))
 
     # add losses
     print('add losses...')
     tf_lr = tf.placeholder(tf.float32, shape=[])
     with tf.device('/gpu:0'):
-        for i in range(1, args.nr_gpu):
+        for i in range(1, nr_gpu):
             loss_gen[0] += loss_gen[i]
 
     # convert loss to bits/dim
-    bits_per_dim = loss_gen[0] / (args.nr_gpu * np.log(2.) * np.prod(obs_shape) * args.batch_size)
+    bits_per_dim = loss_gen[0] / (nr_gpu * np.log(2.) * np.prod(obs_shape) * args.batch_size)
 
     # init & save
     print('init and save...')
@@ -128,16 +131,13 @@ if __name__ == "__main__":
             if y is not None:
                 feed_dict.update({y_init: y})
         else:
-            x = np.split(x, args.nr_gpu)
-            feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
+            x = np.split(x, nr_gpu)
+            feed_dict = {xs[i]: x[i] for i in range(nr_gpu)}
             if y is not None:
-                y = np.split(y, args.nr_gpu)
-                feed_dict.update({ys[i]: y[i] for i in range(args.nr_gpu)})
+                y = np.split(y, nr_gpu)
+                feed_dict.update({ys[i]: y[i] for i in range(nr_gpu)})
         return feed_dict
 
-
-    # get entropy
-    print('getting entropy...')
     if args.checkpoint_prefix_:
         ckpt_prefix = args.checkpoint_prefix_
     else:
@@ -149,11 +149,14 @@ if __name__ == "__main__":
         print('restoring parameters from', ckpt_path)
         saver.restore(sess, ckpt_path)
 
-        print('getting entropy from {} generated samples...'.format(len(train_data.data)))
+        print('getting loss from {} generated samples...'.format(len(train_data.data)))
         train_losses = []
         for d in train_data:
             feed_dict = make_feed_dict(d)
             train_loss = sess.run([bits_per_dim], feed_dict)
             train_losses.append(train_loss)
+
+        print('getting entropy from 1000 losses...'.format(len(train_data.data)))
+        train_losses = train_losses[:1000]
         train_loss_gen = np.mean(train_losses)
         print("Entropy: {}".format(train_loss_gen))
