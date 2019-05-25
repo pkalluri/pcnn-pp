@@ -19,9 +19,16 @@ MODEL_DIR = '../imagenet_model'
 DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
 softmax = None
 
+
 # Call this function with list of images. Each of elements should be a 
 # numpy array with values ranging from 0 to 255.
 def get_inception_score(images, splits=10):
+    preds = get_inception_preds(images)
+    mean, var = get_inception_score_from_preds(preds, splits)
+    return mean, var, preds
+
+
+def get_inception_preds(images):
   assert(type(images) == list)
   assert(type(images[0]) == np.ndarray)
   assert(len(images[0].shape) == 3)
@@ -43,13 +50,16 @@ def get_inception_score(images, splits=10):
         pred = sess.run(softmax, {'ExpandDims:0': inp})
         preds.append(pred)
     preds = np.concatenate(preds, 0)
+    return preds
+
+def get_inception_score_from_preds(preds, splits=10):
     scores = []
     for i in range(splits):
       part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :]
       kl = part * (np.log(part) - np.log(np.expand_dims(np.mean(part, 0), 0)))
       kl = np.mean(np.sum(kl, 1))
       scores.append(np.exp(kl))
-    return np.mean(scores), np.std(scores), preds
+    return np.mean(scores), np.std(scores)
 
 # This function is called automatically.
 def _init_inception():

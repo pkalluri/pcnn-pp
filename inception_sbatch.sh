@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=jag-standard
+#SBATCH --partition=jag-hi
 #SBATCH --gres=gpu:1
 #SBATCH --mem=24000
 #SBATCH --output=save/%j.out
@@ -15,7 +15,7 @@
 # echo "SLURMTMPDIR="$SLURMTMPDIR
 echo "working directory = "$SLURM_SUBMIT_DIR
 
-srun /sailhome/pkalluri/.conda/envs/pkalluri-pyp3.6.8/bin/python generate_samples.py -a save_neurips/716490.out -pd save/pretrained
+srun /sailhome/pkalluri/.conda/envs/pkalluri-pyp3.6.8/bin/python get_inception_score.py -pd save_neurips/_716490_samples/740_preds_on_samples_from_params_cifar.ckpt.npz
 
 # can try the following to list out which GPU you have access to
 # srun /usr/local/cuda/samples/1_Utilities/deviceQuery/deviceQuery
