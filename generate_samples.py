@@ -38,7 +38,7 @@ def get_args():
 
     args = parser.parse_args()
 
-    if args.args_file:
+    if args.args_file_:
         args_file = args.args_file_
     else:
         args_file = args.params_dir_ + '.out'
