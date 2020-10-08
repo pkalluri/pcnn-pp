@@ -78,14 +78,14 @@ def get_args():
     # --------------------------------
     args = parser.parse_args()
     if args.args_file:
-        overwrite_args = read_args_from_out_file(args.args_file)
+        overwrite_args = out_to_args(args.args_file)
         d = vars(args)
         d.update(overwrite_args)
     print('input args:\n', json.dumps(vars(args), indent=4, separators=(',', ':')))  # pretty print args
     return args
 
 
-def read_args_from_out_file(filename):
+def out_to_args(filename):
     with open(filename, 'r') as f:
         json_string = ''
         reading_json = False
