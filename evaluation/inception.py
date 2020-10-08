@@ -34,7 +34,7 @@ import scipy.misc
 import math
 import sys
 
-MODEL_DIR = '/tmp/imagenet'
+MODEL_DIR = '../imagenet_model'
 DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
 softmax = None # If None, updated (see end of file)
 
@@ -68,9 +68,16 @@ def samples_to_predictions(samples: np.ndarray, batchsize: int=1):
   print(preds.shape)
   return preds
 
+
 # Call this function with list of images. Each of elements should be a 
 # numpy array with values ranging from 0 to 255.
 def get_inception_score(images, splits=10):
+    preds = get_inception_preds(images)
+    mean, var = get_inception_score_from_preds(preds, splits)
+    return mean, var, preds
+
+
+def get_inception_preds(images):
   assert(type(images) == list)
   assert(type(images[0]) == np.ndarray)
   assert(len(images[0].shape) == 3)
@@ -92,6 +99,9 @@ def get_inception_score(images, splits=10):
         pred = sess.run(softmax, {'ExpandDims:0': batch})
         preds.append(pred)
     preds = np.concatenate(preds, 0)
+    return preds
+
+def get_inception_score_from_preds(preds, splits=10):
     scores = []
     for i in range(splits):
       part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :]

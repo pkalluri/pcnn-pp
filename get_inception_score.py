@@ -61,8 +61,10 @@ if __name__ == "__main__":
         print(np.min(samples[0]))
         print(np.max(samples[0]))
 
+        # maybe preprocess if not in right format
         # process = lambda img: ((img + 1) * 255 / 2).astype('uint8')
         # samples = [process(s) for s in samples]
+
         print('getting predictions on {} samples...'.format(len(samples)))
         preds = inception.get_inception_preds(samples)
         print('saving predictions to {} ...'.format(preds_path))
