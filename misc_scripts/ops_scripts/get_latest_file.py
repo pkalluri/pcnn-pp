@@ -14,5 +14,6 @@ if __name__ == '__main__':
     dir_path = sys.argv[1]
     latest_filename = get_latest_file(dir_path)
     print(os.path.join(dir_path, latest_filename))
-    # ext = os.path.splitext(latest_filename)
+    # duplicate this file as 'final'
+    ext = os.path.splitext(latest_filename)
     shutil.copy(os.path.join(dir_path, latest_filename), os.path.join(dir_path, f'final_{latest_filename}'))

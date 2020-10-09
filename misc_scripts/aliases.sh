@@ -1,6 +1,14 @@
+vertical() {
+	if [ $# -eq 1 ]
+		then $1 | sed "s/ /\n/g"
+	else
+		sed "s/ /\n/g"
+	fi
+}
+
 catch() { 
 	out=$($1)
-    echo $out
+	echo $out
 	id=$(echo $out | grep -oP 'Submitted batch job \K\w+')
 }
 

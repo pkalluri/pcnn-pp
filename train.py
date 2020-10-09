@@ -1,5 +1,6 @@
 """
 Trains a Pixel-CNN++ generative model with specified loss function.
+The model takes RGB images with int values [0,255] and samples RGB images with float values [-1,1].
 The model only trains (evaluates+backprops) on the specified loss, indicated by the --accumulator flag
 but the model evaluates several additional loss functions for the sole purpose of printing those losses as additional information.
 Uses multiple GPUs, indicated by the flag --nr_gpu.
@@ -22,9 +23,9 @@ import tensorflow as tf
 
 from pixel_cnn_pp import nn
 from pixel_cnn_pp.model import model_spec
-from utils import images as images_util
-from utils import plotting_losses as losses_util
-from utils import io as io_util
+from misc import images as images_util
+from misc import plotting_losses as losses_util
+from misc import io as io_util
 import data_loaders as data_loaders
 
 # -----------------------------------------------------------------------------
@@ -57,6 +58,7 @@ parser.add_argument('-a', '--accumulator', type=str, default='standard', help='H
 # evaluation
 parser.add_argument('--polyak_decay', type=float, default=0.9995, help='Exponential decay rate of the sum of previous model iterates during Polyak averaging')
 parser.add_argument('-ns', '--n_batches_sampled', type=int, default=2, help='How many batches of samples to output.')
+parser.add_argument('-v', '--sampling_variance', type=float, default=.1, help='Sampling variance - we typically either leave out (1) or set to 0.2')
 # reproducibility
 parser.add_argument('-r', '--seed', type=int, default=1, help='Random seed to use')
 args = parser.parse_args()
@@ -232,7 +234,10 @@ for i in range(args.nr_gpu):
         if args.energy_distance:
             new_x_gen.append(out[0])
         else:
-            new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
+            if args.sampling_variance is not None:
+                new_x_gen.append(nn.sample_from_narrow_discretized_mix_logistic(out, args.nr_logistic_mix, var=args.sampling_variance))
+            else:
+                new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
 # add losses and gradients together and get model updates
 tf_lr = tf.placeholder(tf.float32, shape=[])
@@ -266,7 +271,7 @@ bits_per_dim_max_test = loss_gen_max_test[0]/(args.nr_gpu*np.log(2.)*np.prod(ima
 loss_names = ['standard', 'sum', 'max']
 
 # define sampling from the model
-def sample_from_model(sess):
+def sample(sess):
     x_gen = [np.zeros((args.batch_size,) + image_dims, dtype=np.float32) for i in range(args.nr_gpu)]
     for yi in range(image_dims[0]):
         for xi in range(image_dims[1]):
@@ -364,30 +369,30 @@ with tf.Session() as sess:
    
     print('starting 0th epoch')
     for epoch in range(args.max_epochs):
+        all_losses_log = {'train':train_losses_log, 'test': test_losses_log}
+        io_util.save_pickle(all_losses_log, os.path.join(args.save_dir, 'training_losses.pickle'))
+        losses_util.save_plot(
+            all_losses_log, 
+            os.path.join(args.save_dir, 'losses_separate.png'),
+            title=helpful_description,
+            separate=True
+            )
+        losses_util.save_plot(
+            all_losses_log, 
+            os.path.join(args.save_dir, 'losses.png'),
+            title=helpful_description,
+            separate=False
+            )
+
         if epoch % args.sample_frequency == 0:
             print('saving')
             saver.save(sess, os.path.join(args.save_dir, 'params.ckpt')) # save params
-            all_losses_log = {'train':train_losses_log, 'test': test_losses_log}
-
-            io_util.save_pickle(all_losses_log, os.path.join(args.save_dir, 'training_losses.pickle'))
-            losses_util.save_plot(
-                all_losses_log, 
-                os.path.join(args.save_dir, 'training_losses_separate.png'),
-                title=helpful_description,
-                separate=True
-                )
-            losses_util.save_plot(
-                all_losses_log, 
-                os.path.join(args.save_dir, 'training_losses.png'),
-                title=helpful_description,
-                separate=False
-                )
 
             # generate samples from the model
             n_samples = args.n_batches_sampled * args.batch_size
             sampled_batches = []
             for i in range(args.n_batches_sampled):
-                sampled_batches.append(sample_from_model(sess)) # generate a batch, shape of batch: batch_size x H x W x C
+                sampled_batches.append(sample(sess)) # generate a batch, shape of batch: batch_size x H x W x C, floats [-1,1]
             samples = np.concatenate(sampled_batches,axis=0) # shape: n_batches*batch_size x H x W x C
             all_epochs_samples.append(samples)
 
@@ -399,10 +404,11 @@ with tf.Session() as sess:
             last_samples_path = samples_path
 
             # save all training samples as summary npz and png
-            np.savez(os.path.join(args.save_dir, 'training_samples.npz'), samples=np.stack(all_epochs_samples)) # shape: N_(SAVED)EPOCHS x N_GENERATED_SAMPLES x H x W x C
+            np.savez(os.path.join(args.save_dir, 'samples.npz'), samples=np.stack(all_epochs_samples)) # shape: N_(SAVED)EPOCHS x N_GENERATED_SAMPLES x H x W x C
             # savez so that this is easily extensible to save classes array, losses array, etc, too
             all_samples_tiled = images_util.tile(np.concatenate(all_epochs_samples), grid_shape=(int((epoch / args.sample_frequency)+1), n_samples))
-            all_samples_path = os.path.join(args.save_dir,'training_samples.png')
+            all_samples_path = os.path.join(args.save_dir,'samples.png')
+            images_util.save(all_samples_tiled, os.path.join(args.save_dir, f'samples_array.png')) #DBG
             images_util.save_with_title(all_samples_tiled, title=f'{helpful_description}\nepochs 0-{epoch}', path=all_samples_path)
 
         print('training')

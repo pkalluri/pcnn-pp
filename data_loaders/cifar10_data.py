@@ -8,6 +8,7 @@ import sys
 import tarfile
 from six.moves import urllib
 import numpy as np
+import argparse
 #from PIL import Image
 
 def maybe_download_and_extract(data_dir, url='http://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'):
@@ -123,9 +124,13 @@ class DataLoader(object):
 
 # Testing sorted data loader
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('data_dir', type=str, help='Path to data directory, to put loaded data')
+    args = parser.parse_args()
+
     batch_size = 16
     nr_gpu = 8
-    train_data = DataLoader('../../data', 'train', batch_size * nr_gpu, rng=None, shuffle=True, return_labels=True)
+    train_data = DataLoader(args.data_dir, 'train', batch_size * nr_gpu, rng=None, shuffle=True, return_labels=True)
     imgs,labels = train_data.next()
     print(labels)
     for i in range(10):

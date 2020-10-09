@@ -9,7 +9,7 @@ import argparse
 import numpy as np
 import tensorflow as tf
 
-from utils.args_reading import overwrite_args_from_out_file
+from misc.args_reading import overwrite_args_from_out_file
 from pixel_cnn_pp import nn
 from pixel_cnn_pp.model import model_spec
 

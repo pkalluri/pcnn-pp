@@ -5,7 +5,7 @@ import sys
 import os
 import re
 sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..'))) # Adds higher directory to python modules path.
-from utils import plotting_losses
+from misc import plotting_losses
 
 parser = argparse.ArgumentParser()
 parser.add_argument('out_path', type=str, help='Path of the .out file')

@@ -6,8 +6,8 @@ import matplotlib.ticker as ticker
 import os
 import sys
 
-from utils import training_args as training_args_util
-from utils import io as io_util
+from misc import training_args as training_args_util
+from misc import io as io_util
 
 
 def save_plot(losses, out_path, title='', separate=True, show=False):
