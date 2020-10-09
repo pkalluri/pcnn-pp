@@ -37,8 +37,8 @@ def get_args():
                         default=500, help='How many batches of samples to generate')
     parser.add_argument('-b', '--batch_size_', type=int,
                         default=100, help='Batch size for generation')
-    # parser.add_argument('-tdk', '--train_data_key_', type=str,
-    #                     default='samples_arr', help='Key of string for loading npz data')
+    parser.add_argument('-tdk', '--train_data_key_', type=str,
+                        default='samples_arr', help='Key of string for loading npz data')
     parser.add_argument('-si', '--save_interval_', type=int, default=10000,
                         help='How often to save a snapshot of our samples. We always save our final samples at the end.')
     parser.add_argument('-g', '--nr_gpu_', type=int, default=1,
